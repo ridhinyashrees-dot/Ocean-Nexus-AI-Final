@@ -1,0 +1,8 @@
+
+fastapi
+uvicorn
+xarray
+netCDF4
+numpy
+pandas
+requests
