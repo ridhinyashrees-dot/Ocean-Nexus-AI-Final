@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { TileLayer } from '@deck.gl/geo-layers';
+import { BitmapLayer } from '@deck.gl/layers';
 import DeckGL from '@deck.gl/react';
 import { LineLayer, ScatterplotLayer } from '@deck.gl/layers';
 import { MapView } from '@deck.gl/core';
@@ -50,51 +52,42 @@ const MapDashboard = ({ onBack }) => {
     }
   */
   useEffect(() => {
+    let isMounted = true; // Prevent state update on unmounted component
     const fetchArgoData = async () => {
       try {
         setLoading(true);
-
         const response = await axios.get(
-          'http://127.0.0.1:8000/api/v1/chat',
-          {
-            params: {
-              q: 'Show ARGO temperature and salinity trajectory'
-            }
-          }
+          'http://127.0.0.1:8000/api/v1/argo-floats' // Change this to a dedicated endpoint
         );
 
-        const payload = response.data?.dashboard_payload;
+        if (!isMounted) return;
 
-        const payloadArray = Array.isArray(payload)
-          ? payload
-          : payload
-            ? [payload]
-            : [];
+        const payload = response.data?.dashboard_payload || response.data;
+        const payloadArray = Array.isArray(payload) ? payload : [payload];
 
         const formattedFloats = payloadArray
-          .map((item, index) => {
-            const trajectory = item.trajectory_4d || [];
-
-            return {
-              id: item.float_id || `ARGO-FLOAT-${index + 1}`,
-              title: item.title || 'ARGO Float',
-              region: item.region || 'Ocean Region',
-              trajectory_4d: trajectory
-            };
-          })
+          .map((item, index) => ({
+            id: item.float_id || `ARGO-FLOAT-${index + 1}`,
+            title: item.title || 'ARGO Float',
+            region: item.region || 'Ocean Region',
+            trajectory_4d: item.trajectory_4d || []
+          }))
           .filter(float => float.trajectory_4d.length > 0);
 
         setArgoFloats(formattedFloats);
       } catch (error) {
         console.error('Unable to load ARGO data:', error);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
     fetchArgoData();
-  }, []);
 
+    return () => {
+      isMounted = false;
+    };
+  }, []);
   /*
     Normalize all trajectory records.
     Supports both:
@@ -302,7 +295,18 @@ const MapDashboard = ({ onBack }) => {
   /*
     Selected observation.
   */
-  const activePoint = currentPoints[0] || null;
+  /*
+    Selected observation.
+    Tracks the selected float across time, or defaults to the first available float.
+  */
+  const activePoint = useMemo(() => {
+    if (selectedFloat) {
+      // Time change aagum pothum select pannirukkura float-oda current time point-a kandu pudikkum
+      const matchingPoint = currentPoints.find(p => p.floatId === selectedFloat.floatId);
+      if (matchingPoint) return matchingPoint;
+    }
+    return currentPoints[0] || null;
+  }, [selectedFloat, currentPoints]);
 
   /*
     DeckGL camera.
@@ -321,55 +325,66 @@ const MapDashboard = ({ onBack }) => {
     ScatterplotLayer renders current observations.
   */
   const layers = [
+    // 1. Intha Base Map Tile-a modhal la podu machan
+    new TileLayer({
+      id: 'base-tile-layer',
+      data: 'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      minZoom: 0,
+      maxZoom: 19,
+      tileSize: 256,
+      renderSubLayers: props => {
+        const { boundingBox } = props.tile;
+        return new BitmapLayer(props, {
+          data: null,
+          image: props.data,
+          bounds: [
+            boundingBox[0][0],
+            boundingBox[1][1],
+            boundingBox[1][0],
+            boundingBox[0][1]
+          ]
+        });
+      }
+    }),
+
+    // 2. Unoda LineLayer
     new LineLayer({
       id: 'trajectory-line',
       data: lineSegments,
-
       getSourcePosition: d => d.sourcePosition,
       getTargetPosition: d => d.targetPosition,
-
       getColor: [6, 182, 212, 190],
       getWidth: 5,
       widthMinPixels: 3,
-
       pickable: false
     }),
 
+    // 3. Unoda ScatterplotLayer
     new ScatterplotLayer({
       id: 'argo-current-observations',
       data: currentPoints,
-
       pickable: true,
       opacity: 0.95,
       stroked: true,
       filled: true,
-
       radiusScale: 6,
       radiusMinPixels: 8,
       radiusMaxPixels: 24,
-
       lineWidthMinPixels: 2,
-
       getPosition: d => d.coordinates,
-
       getRadius: d => 15 + Math.abs(d.depth) / 15,
-
       getFillColor: d => {
         if (d.temp >= 29) {
           return [239, 68, 68, 235];
         }
-
         return [6, 182, 212, 235];
       },
-
       getLineColor: [255, 255, 255],
-
       onClick: info => {
         if (info.object) {
           setSelectedFloat(info.object);
         }
       },
-
       onHover: info => setHoverInfo(info)
     })
   ];
@@ -435,7 +450,13 @@ const MapDashboard = ({ onBack }) => {
 
               <DeckGL
                 initialViewState={initialViewState}
-                controller={true}
+                controller={{
+        dragRotate: true, // Right click or Control + drag panni rotate panrathuku
+        touchRotate: true, // Mobile/Touch screen la rotate panrathuku
+        dragPan: true,    // Hand symbol vechu screen-a move panrathuku (Default drag)
+        scrollZoom: true, // Zoom in/out panrathuku
+        doubleClickZoom: true
+      }}
                 layers={layers}
                 views={new MapView({ repeat: true })}
               />

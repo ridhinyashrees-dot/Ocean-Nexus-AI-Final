@@ -123,6 +123,7 @@ export default function FloatChatDashboard({ onBack }) {
         backgroundColor: 'rgba(6, 182, 212, 0.2)',
         tension: 0.3
       },
+      
       {
         label: 'Salinity (PSU)',
         data: currentDepthProfile.map(dp => dp.salinity || 35),
